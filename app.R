@@ -8,9 +8,24 @@ server <- function(input, output,session) {
   
   CVtune <- readRDS('initState.Rdata')
   makeReactiveBinding('CVtune')
-  
+  varBefore <- ""
   rawdata <- reactive({
-    datasets[[input$dataset]]
+    if (input$dataset != "custom") {
+      return(datasets[[input$dataset]])
+    }
+    if (!is.null(input$fileIn$datapath)) {
+      ext <- tools::file_ext(input$fileIn$datapath)
+      if (ext == "xlsx") {
+        dat <- openxlsx::read.xlsx(input$fileIn$datapath)
+      } else if (ext == "rds" || ext == "RDS") {
+        dat <- readRDS(input$fileIn$datapath)
+      } else {
+        dat <- data.table::fread(input$fileIn$datapath, data.table = F)
+      }
+      return(dat)
+    } else {
+      return(datasets["car"])
+    }
   })
   
   observe({
@@ -64,7 +79,7 @@ server <- function(input, output,session) {
     
     c <- class(df2$y)
     lvls <- length(unique(df2$y))
-    if(lvls<10|(c!='numeric'&c!='integer')){
+    if(lvls<10||(c!='numeric'&c!='integer')){
       modelType <<-'Classification'
       df2$y <- factor(df2$y)
     } else {
@@ -166,10 +181,17 @@ server <- function(input, output,session) {
     getRes <- function(i){
       name <- names(fits)[i]
       res <- fits[[i]]$results
-      df <- res[(ncol(res)-3):ncol(res)]
-      apply(res,1,function(r) paste(r[1:(ncol(res)-4)],collapse = '-')) %>% 
-        paste(name,.,sep='-') -> model
-      cbind.data.frame(model,df,name=name[[1]],stringsAsFactors =F)
+      if ("MAESD" %in% colnames(res)) {
+        df <- res[(ncol(res)-5):ncol(res)]
+        apply(res,1,function(r) paste(r[1:(ncol(res)-6)],collapse = '-')) %>% 
+          paste(name,.,sep='-') -> model
+        cbind.data.frame(model,df,name=name[[1]],stringsAsFactors =F)
+      } else {
+        df <- res[(ncol(res)-3):ncol(res)]
+        apply(res,1,function(r) paste(r[1:(ncol(res)-4)],collapse = '-')) %>% 
+          paste(name,.,sep='-') -> model
+        cbind.data.frame(model,df,name=name[[1]],stringsAsFactors =F)
+      }
     }
     
     df <- plyr::ldply(1:length(fits),getRes)
@@ -405,7 +427,6 @@ server <- function(input, output,session) {
   output$CVplot1 <- renderPlot({
     resdf <- CVres()
     type <- isolate(modelType)
-    
     resdf$model <- factor(resdf$model,levels = rev(resdf$model[resdf$rank]))
     if(type=='Regression'){
       ggplot(resdf,aes(x=model,color=name))+
@@ -495,7 +516,7 @@ server <- function(input, output,session) {
       # wes_palettes$Darjeeling
       
     } else {
-      pal <- wes_palette('Darjeeling',n = length(unique(dataTrain$y)),type = 'c')
+      pal <- wesanderson::wes_palette('Darjeeling1',n = length(unique(dataTrain$y)),type = 'c')
       ggplot(dataTrain,aes(x=y,fill=y))+
         geom_bar(stat='count')+
         scale_fill_manual(values=pal)+
@@ -583,10 +604,10 @@ ui <- bootstrapPage(useShinyjs(),
                       dashboardBody(
                         tabItems(
                           tabItem("setup",
-                                  box(width = 4,title = 'Input Dataset',solidHeader = T,status = 'primary',
+                                  shinydashboard::box(width = 4,title = 'Input Dataset',solidHeader = T,status = 'primary',
                                       selectInput('dataset',label = 'Choose Dataset',
-                                                  choices = names(datasets),selected='iris'),
-                                      fileInput('fileIn',label = 'Upload data') %>% disabled(),
+                                                  choices = c(names(datasets), "custom"),selected='iris'),
+                                      fileInput('fileIn',label = 'Upload data'),
                                       actionButton('btn_viewData',label = 'View Data',icon=icon('table')),
                                       hr(),
                                       
@@ -597,7 +618,7 @@ ui <- bootstrapPage(useShinyjs(),
                                       
                                       
                                   ),
-                                  box(width=4,title = 'y variable',solidHeader = T,status = 'primary',
+                                  shinydashboard::box(width=4,title = 'y variable',solidHeader = T,status = 'primary',
                                       helpText('Select the variable we would like to predict'),
                                       selectizeInput('yvar',label=label.help('y var','lbl_yvar'),choices = character(0)),
                                       helpText(HTML(paste('data type:', textOutput('Ytype')))),
@@ -611,7 +632,7 @@ ui <- bootstrapPage(useShinyjs(),
                                       verbatimTextOutput('Ystats')
                                       
                                   ),
-                                  box(width=4,title = 'X vars',solidHeader = T,status = 'primary',
+                                  shinydashboard::box(width=4,title = 'X vars',solidHeader = T,status = 'primary',
                                       selectizeInput('xvar',label=label.help('X (Predict Y as function of):','lbl_xvar'),choices = character(0),multiple = T),
                                       bsTooltip(id = "lbl_xvar", title = "Try and predict Y as function of these variables", 
                                                 placement = "right", trigger = "hover")
@@ -625,7 +646,7 @@ ui <- bootstrapPage(useShinyjs(),
                                   
                                   # ),
                                   column(width=3,
-                                         box(width = 12,title = 'Model Options',solidHeader = T,status = 'primary',
+                                         shinydashboard::box(width = 12,title = 'Model Options',solidHeader = T,status = 'primary',
                                              selectInput('slt_algo',label = 'Algorithm:'%>%label.help('lbl_algo'),
                                                          choices = reg.mdls,selected = reg.mdls,multiple=T),
                                              selectizeInput('slt_Tune','Parameter Tuning'%>%label.help('lbl_Tune'),
@@ -649,7 +670,7 @@ ui <- bootstrapPage(useShinyjs(),
                                                        placement = "right", trigger = "hover")
                                              
                                          ),
-                                         box(width = 12,title = 'Summary',solidHeader = F,
+                                         shinydashboard::box(width = 12,title = 'Summary',solidHeader = F,
                                              status = 'primary',
                                              helpText(textOutput('txt_bestModel')),
                                              helpText(textOutput('txt_bestModelStat1')),
@@ -690,7 +711,7 @@ ui <- bootstrapPage(useShinyjs(),
                           ),
                           tabItem("test",
                                   column(width=3,
-                                         box(width = 12,title = 'Test Set Predictions',solidHeader = F,status = 'primary',
+                                         shinydashboard::box(width = 12,title = 'Test Set Predictions',solidHeader = F,status = 'primary',
                                              # radioButtons('rdo_finalModel','Final model',
                                              #              c('Best Model','Ensemble of top models')),
                                              selectInput('slt_Finalalgo',label = 'Final Model:'%>%label.help('lbl_Finalalgo'),
@@ -704,13 +725,13 @@ ui <- bootstrapPage(useShinyjs(),
                                          valueBoxOutput('testsetS1',width=12),
                                          valueBoxOutput('testsetS2',width=12)
                                   ),
-                                  box(width = 6,title = 'Test Set observed vs Predicted',
+                                  shinydashboard::box(width = 6,title = 'Test Set observed vs Predicted',
                                       solidHeader = T,status = 'primary',
                                       plotOutput('testsetPlot')
                                   )
                           ),
                           tabItem("imp",
-                                  box(width = 6,title = 'Feature importance',
+                                  shinydashboard::box(width = 6,title = 'Feature importance',
                                       helpText('Relative feature importance indicated from randomForest'),
                                       
                                       plotOutput('featImp')
